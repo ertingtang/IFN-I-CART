@@ -1,0 +1,332 @@
+## this is code for panels in figure 1
+
+##============================-- Set up Environment --=======================================##
+rm(list=ls())
+setwd("/project/jhuangime/erting/workspace/project_IFN/")
+.libPaths("~/erting/software/R_4.2/")
+
+unloadNamespace("plyr")
+pkgs <- c("Seurat", "tidyverse", "SingleCellExperiment",
+          "ggpubr", "ggsci", "ggrepel", "clusterProfiler", "pheatmap", "devtools", 
+          "cowplot", "data.table", "harmony", "BiocParallel", "Nebulosa", "enrichplot", "patchwork")
+
+lapply(pkgs, require, character.only = TRUE)
+
+source("scripts/functions.R")
+
+## load seurat obj
+IP <- readRDS("./processing/seurat_objs/IP_NoLowQuality_8pts_20240327.rds")
+
+##============================-- fig 1a umap showing CR and NR --=======================================##
+px <- DimPlot(IP, reduction = "umap", group.by = "response", cols = c("#FAB833", "#5981BC"), pt.size = 0.5) +
+  theme_pubr(border = F, legend = "right")  + 
+  labs(x="UMAP1", y="UMAP2") +
+  theme(
+    plot.title = element_blank(),
+    axis.title = element_text(size=20,face = 'bold'),
+    axis.ticks = element_blank(),
+    axis.text = element_blank(),
+    legend.title = element_blank(),
+    legend.text = element_text(size=12)) + 
+  coord_fixed(ratio = 1) 
+saveFig(px, "./exploration/plots/UMAP_Feature/umap_group.by.response_20240708", wd = 3000, ht = 3000)
+
+##============================-- fig 1b umap showing all phenotypes --=======================================##
+Idents(IP) <- "phenotype"
+
+## plotting
+px <- DimPlot(IP, reduction = "umap", group.by = "phenotype", pt.size = 0.5, label = F) +
+  scale_color_npg() +
+  theme_pubr(border = F, legend = "right")  + 
+  labs(x="UMAP1", y="UMAP2") +
+  theme(
+    plot.title = element_blank(),
+    axis.title = element_text(size=20,face = 'bold'),
+    axis.ticks = element_blank(),
+    axis.text = element_blank(),
+    legend.title = element_blank(),
+    legend.text = element_text(size=12)) + 
+  coord_fixed(ratio = 1) 
+saveFig(px, "./exploration/plots/UMAP_Feature/umap_phenotype_20240727", wd = 3000, ht = 3000)
+
+## number of each phenotype
+table(IP$anno.fine)
+
+##============================-- fig 1c violin plot of feature expression --=======================================##
+## representive features
+rep.features <- c("CD4", "CD8A", "MKI67", "IL7R", "SELL", "CD38", "TBX21", "KLRG1", "GZMB", "FOXP3", "TRDC", "NCAM1")
+
+## plotting
+px <- VlnPlot(IP, features = rep.features, group.by = "phenotype", 
+              pt.size = 0, stack = T, fill.by = "ident", cols = pal_npg()(7), flip = T) +
+  labs(x = "") + NoLegend() +
+  theme(
+    axis.title = element_text(size=15, face = 'bold'),
+    axis.text.x = element_text(size = 12, face = 'bold'),
+    strip.text.y = element_text(size = 12, face = "italic"))
+saveFig(px, "./exploration/plots/UMAP_Feature/feature.plot.representative_20240708", wd = 2000, ht = 2000)
+
+##============================-- fig 1d proportion of each phenotypes in each patient --=======================================##
+## prepare data
+df <- FetchData(IP, vars = c("patient", "phenotype", "response", "patient.by.response"))
+colnames(df) <- c("Patient", "Phenotype", "Response", "Patient.Ordered")
+
+## plotting
+px <- ggplot(df, aes(x = Patient.Ordered, fill = Phenotype)) + 
+  geom_bar(position = "fill", width = 0.7, linewidth = 0) + 
+  scale_fill_npg() +
+  xlab("") +
+  ylab("Proportion") +
+  theme_pubr(border = T, legend = "right") +
+  theme(
+    plot.title = element_blank(),
+    axis.title = element_text(size=20, face = 'bold'),
+    axis.text.x = element_text(size = 15, face = 'bold', angle = 30, hjust = 1),
+    axis.text.y = element_text(size = 15),
+    legend.title = element_blank(),
+    legend.text = element_text(size=15, face = "bold"))
+saveFig(px, "./exploration/plots/UMAP_Feature/proportion_phenotype.in.patient_group.by.response_20240708", wd = 2500, ht = 2000)
+
+##============================-- fig 1e GESA results --=======================================##
+## Define key gene stes
+key.sets <- c("HALLMARK_INTERFERON_ALPHA_RESPONSE", "cytolysis", "leukocyte degranulation",
+              "HALLMARK_E2F_TARGETS", "HALLMARK_MTORC1_SIGNALING", "HALLMARK_GLYCOLYSIS", "HALLMARK_HYPOXIA")
+
+## load gse results
+gse.combined <-read.csv("./exploration/tables/GSE/8pts_DEGs_CRvsNR_GSE.combined.csv")
+
+## filter results
+filtered.results <- gse.combined %>%
+  filter(Description %in% key.sets) %>%
+  mutate(Regulation=ifelse(NES>0, "Up", "Down")) %>%
+  mutate(Pathway=ifelse(ref=="GOBP", paste0(ref, ": " , str_replace(Description, "^(.)", function(x) toupper(x))),
+                        ifelse(ref=="HALLMARK", paste0(ref, ": ", 
+                                                       str_replace(str_replace_all(str_to_lower(Description), "_", " "), "^(.)", function(x) toupper(x))), 
+                               paste0(ref, ": ", Description))))
+filtered.results$Regulation <- factor(filtered.results$Regulation, levels = c("Up", "Down"))
+
+## plotting
+if (nrow(filtered.results)>0) {
+  px <- ggplot(filtered.results, aes(x = reorder(Pathway, NES), y = NES, size = -log10(p.adjust), fill = Regulation)) +
+    geom_segment(aes(xend = reorder(Pathway, NES), yend = 0), color = "black", linetype = "solid", size  = 0.5) +
+    geom_point(shape = 21) + 
+    scale_size_continuous(range = c(5, 10)) + # Adjust the range of dot sizes
+    coord_flip() +
+    ylim(-2.5,2.2) +
+    scale_fill_manual(values = c("Up" = "#FAB833", "Down" = "#5981BC")) +
+    labs(x = " ", y = "Normalized Enrichment Score (NES)", title = "All") +
+    theme_pubr(border = T, legend = "right") + 
+    theme(
+      plot.title = element_text(size=20, face = "bold", hjust = 0.5),
+      axis.title = element_text(size = 15, face = "bold"), 
+      axis.text = element_text(size = 12), 
+      legend.title = element_text(size = 12, face = "bold"), 
+      legend.text = element_text(size = 12, face = "bold"), 
+    )
+  saveFig(px, "./exploration/plots/GSEA/CRvsNR_all_20240716", wd = 3000, ht = 1500)
+}
+
+##============================-- fig 1f violin plots of gene set signature scoring --=======================================##
+## Add module
+## IFN-I
+ISGs <- readRDS("./exploration/rds/GeneSets/ISG_HALLMARK_INTERFERON_ALPHA_RESPONSE.rds")
+IP <- AddModuleScore(IP, features = list(ISGs), name = "HALLMARK_interferon_alpha_response")
+IP$HALLMARK_interferon_alpha_response <- IP$HALLMARK_interferon_alpha_response1
+IP$HALLMARK_interferon_alpha_response1 <- NULL
+
+## Cytolysis
+cytolysis <- readRDS("./exploration/rds/GeneSets/cytolysis_GOBP_GO:0019835.rds")
+IP <- AddModuleScore(IP, features = list(cytolysis), name = "GOBP_cytolysis")
+IP$GOBP_cytolysis <- IP$GOBP_cytolysis1
+IP$GOBP_cytolysis1 <- NULL
+
+## prepare data frame
+df <- FetchData(IP, vars = c("response", "phenotype", 
+                             "HALLMARK_interferon_alpha_response", "GOBP_cytolysis"))
+colnames(df) <- c("Response", "Phenotype", "HALLMARK_interferon_alpha_response", "GOBP_cytolysis")
+
+## plotting 
+phenotypes <- unique(IP$phenotype)
+for (GeneSet in GeneSets) {
+  plots <- list()
+  for (pheno in phenotypes) {
+    data <- df[df$Phenotype==pheno,]
+    px <- ggviolin(data, x = "Response", y = GeneSet, fill = "Response", add = "boxplot") +
+      scale_fill_manual(values = c("#FAB833", "#5981BC")) +
+      labs(title = pheno, x = "", y = "Signature Score") +
+      theme_pubr(legend = "right") +
+      scale_y_continuous(expand = expansion(mult = c(0.01,0.05))) +
+      geom_signif(
+        comparisons = list(c("CR", "NR")),
+        test = "wilcox.test",
+        map_signif_level = FALSE,
+        textsize = 3,
+        vjust = 0.05,
+        y_position = max(data[[GeneSet]], na.rm = TRUE) + 0.1 * abs(max(data[[GeneSet]], na.rm = TRUE))
+      ) +
+      theme(
+        plot.title = element_text(size = 14, face = "bold", hjust = 0.5), 
+        axis.title = element_text(size = 12, face = "bold"), 
+        axis.text = element_text(size = 12), 
+        legend.title = element_text(size = 12), 
+        legend.text = element_text(size = 12) 
+      ) 
+    saveFig(px, paste0("./exploration/plots/Signature_Score/violin.plot.sc_", GeneSet, "_", pheno), wd = 2000, ht = 2000)
+    plots[[pheno]] <- px
+  }
+
+##============================-- fig 1g tile maps of gene set signature scoring across phenotype and patient--=======================================##
+## necesasry
+library(ComplexHeatmap)
+library(circlize)
+library(Cairo)
+## define genesets=================================
+GeneSets <- c("HALLMARK_interferon_alpha_response", "GOBP_cytolysis")
+## plotting
+for (GeneSet in GeneSets) {
+  ## prepare dataframe
+  df <- FetchData(IP, vars = c("patient", "anno.fine", GeneSet))
+  df.processed <- df %>%
+    rename(phenotypes = anno.fine, geneset = GeneSet) %>% 
+    group_by(patient, phenotypes) %>%
+    summarise(AvgExpr = mean(geneset, na.rm = TRUE), .groups = "drop") %>%
+    pivot_wider(names_from = phenotypes, values_from = AvgExpr) %>%
+    column_to_rownames("patient")
+  z.scores <- as.data.frame(t(as.data.frame(scale(df.processed)))) %>% 
+    dplyr::select("P031", "P033", "P034", "P039", "P049", "P028", "P032", "P052")
+  ## plotting
+  ## define splicing groups
+  column_split <- factor(c(rep(c("CR"), 5), rep(c("NR"), 3)))
+  
+  ## PDF
+  px <- Heatmap(as.matrix(z.scores),
+                col = c("#5981BC", "#FFFFFF", "#FAB833"),
+                name = "Scaled Score",
+                border = T,
+                border_gp = gpar(col = "black", lwd = 0.5),
+                rect_gp = gpar(col = "black", lwd = 0.5),
+                row_names_side = "left",
+                row_names_gp = gpar(fontsize = 12),
+                cluster_rows = F,
+                row_order = c("Proliferating", "Naive_Activated", "CD4_Mem", "Treg", "CD8_EM", "CD8_Eff", "Unconventional"),
+                cluster_columns = F,
+                column_order = c("P031", "P033", "P034", "P039", "P049", "P028", "P032", "P052"),
+                column_names_side = "bottom",
+                column_names_rot = 30,
+                column_names_gp = gpar(fontsize = 12),
+                cluster_row_slices = FALSE,
+                cluster_column_slices = FALSE,
+                column_split = column_split,
+                column_title_gp = gpar(fontsize = 16, fontface = "bold", col = c("#FAB833", "#5981BC")),
+                column_title_rot = 0,
+                column_title_side = "top",
+                width = unit(12.2, "cm"), 
+                height = unit(10.5, "cm"),
+                column_gap = unit(2, "mm")
+  )
+  pdf(paste0("./exploration/plots/Signature_Score/tile.map_", GeneSet, ".pdf"), width = 12, height = 11)
+  print(px)
+  dev.off()
+}
+
+##============================-- fig 1h tile maps of correlations between IFN and cytolysis DEGs--=======================================##
+## find genes of two sets in DEGs
+DEGs <- read.csv("./exploration/tables/8pts_DEGs_CRvsNR.csv")
+up.genes <- DEGs[DEGs$avg_log2FC>=0.25 & DEGs$p_val_adj<0.05,]$X
+ISGs.rep <- up.genes[up.genes %in% ISGs] #"IFITM1" "IFITM2" "B2M"    "ISG20"  "PSME2"  "HLA-C"  "MX1"    "IL4R"  
+cyto.rep <- up.genes[up.genes %in% cytolysis] #"GZMB"  "NKG7"  "GZMA"  "GZMH"  "GZMM"  "PRF1"  "TGFB1"
+
+## prepare matrix
+corr.tb <- as.data.frame(matrix(ncol = 4))
+colnames(corr.tb) <- c("Gene.ISGs", "Gene.cyto", "R", "P.value")
+i <- 1 
+for (gene.IFN in ISGs.rep) {
+  for (gene.cyto in cyto.rep) {
+    corr <- cor.test(df[[gene.IFN]], df[[gene.cyto]], method = "spearman")  # Choose method as appropriate
+    corr.tb[i, "Gene.ISGs"] <- gene.IFN 
+    corr.tb[i, "Gene.cyto"] <- gene.cyto 
+    corr.tb[i, "R"] <- corr$estimate
+    corr.tb[i, "P.value"] <- corr$p.value
+    i <- i+1
+  }
+}
+corr.matrix <- corr.tb %>%
+  mutate(sig.R = ifelse(P.value < 0.05, R, 0)) %>% ## remove non-sig corr
+  dplyr::select("Gene.ISGs", "Gene.cyto", "sig.R") %>%
+  pivot_wider(names_from = Gene.cyto, values_from = sig.R) %>%
+  column_to_rownames("Gene.ISGs")
+
+## define colors
+breaks <- c(seq(min(corr.matrix), 0, length.out = 50), seq(0, max(corr.matrix), length.out = 51)[-1])
+colors <- unique(c(colorRampPalette(c("#5981BC", "#FFFFFF"))(50), colorRampPalette(c("#FFFFFF", "#FAB833"))(51)))
+heatmap_colors <- colorRamp2(breaks, colors)
+
+##plotting
+px <- Heatmap(as.matrix(corr.matrix),
+              col = heatmap_colors,
+              name = "Corr",
+              border = T,
+              border_gp = gpar(col = "black", lwd = 0.5),
+              rect_gp = gpar(col = "black", lwd = 0.5),
+              row_names_side = "left",
+              row_names_gp = gpar(fontsize = 12, fontface = "italic"),
+              cluster_rows = F,
+              row_order = ISGs.rep,
+              cluster_columns = F,
+              column_order = cyto.rep,
+              column_names_side = "bottom",
+              column_names_rot = 30,
+              column_names_gp = gpar(fontsize = 12, fontface = "italic"),
+              cluster_row_slices = FALSE,
+              cluster_column_slices = FALSE,
+              column_title_rot = 0,
+              column_title_side = "top",
+              width = unit(1.5*length(cyto.rep), "cm"), 
+              height = unit(1.5*length(ISGs.rep), "cm")
+)
+## PDF
+pdf("./exploration/plots/Correlation/DEGs.all/rep.genes.coefficiency.spearman_20240716.pdf", width = 12, height = 11)
+print(px)
+dev.off()
+
+##============================-- fig 1i scatter plots of correlations between gene set signature scoring of IFN and cytolysis DEGs--=======================================##
+## add module score
+IP <- AddModuleScore(IP, features = list(ISGs.rep), name = "ISGs.rep")
+IP$ISGs.rep <- IP$ISGs.rep1
+IP$ISGs.rep1 <- NULL
+
+IP <- AddModuleScore(IP, features = list(cyto.rep), name = "cyto.rep")
+IP$cyto.rep <- IP$cyto.rep1
+IP$cyto.rep1 <- NULL
+
+## prepare data set
+df <- FetchData(IP, vars = c("anno.fine", "response", "patient", "ISGs.rep", "cyto.rep")) %>%
+  rename(Phenotype = anno.fine, Response = response, Patient = patient, 
+         IFN.response = ISGs.rep, 
+         cytolysis = cyto.rep) %>%
+  group_by(Phenotype, Response, Patient) %>%
+  summarise(AvgExprCytolysis = mean(cytolysis, na.rm = TRUE), AvgExprIFN = mean(IFN.response, na.rm = TRUE), .groups = "drop")
+## plotting
+for (pheno in phenotypes) {
+  dt <- df[df$Phenotype==pheno,]
+  cor.spearman <- cor.test(dt$AvgExprIFN, dt$AvgExprCytolysis, method = "spearman", exact = T)  # Choose method as appropriate
+  px <- ggplot(dt, aes(x = AvgExprIFN, y = AvgExprCytolysis, color = Response)) +
+    geom_point(size = 5) +
+    geom_smooth(se = T, method = lm, color = "black", linewidth = 0.5, aes(group = 1)) +
+    scale_color_manual(values = c("#FAB833", "#5981BC")) +
+    theme_pubr() +
+    labs(x = "ISGs.rep", y = "cytolysis.rep", title = pheno) +
+    theme_pubr(legend = "right") +
+    theme(
+      plot.title = element_text(size = 14, face = "bold", hjust = 0.5), 
+      axis.title = element_text(size = 12, face = "bold"), 
+      axis.text = element_text(size = 12), 
+      legend.title = element_text(size = 12), 
+      legend.text = element_text(size = 12) 
+    ) +
+    annotate("text", x = Inf, y = Inf, 
+             label = sprintf("Rho = %.2f\nP value = %.3f", cor.spearman$estimate, cor.spearman$p.value), hjust = 1.1, vjust = 1.1, size = 5)
+  plots[[pheno]] <- px
+  saveFig(px, paste0("./exploration/plots/Correlation/DEGs.all/pseudo.bulk.patient_scatter.plot.", pheno, ".diff.response.bycolor.spearman_20240715"), wd = 2000, ht = 1500)
+}
+
