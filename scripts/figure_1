@@ -126,56 +126,8 @@ if (nrow(filtered.results)>0) {
   saveFig(px, "./exploration/plots/GSEA/CRvsNR_all_20240716", wd = 3000, ht = 1500)
 }
 
-##============================-- fig 1f violin plots of gene set signature scoring --=======================================##
-## Add module
-## IFN-I
-ISGs <- readRDS("./exploration/rds/GeneSets/ISG_HALLMARK_INTERFERON_ALPHA_RESPONSE.rds")
-IP <- AddModuleScore(IP, features = list(ISGs), name = "HALLMARK_interferon_alpha_response")
-IP$HALLMARK_interferon_alpha_response <- IP$HALLMARK_interferon_alpha_response1
-IP$HALLMARK_interferon_alpha_response1 <- NULL
 
-## Cytolysis
-cytolysis <- readRDS("./exploration/rds/GeneSets/cytolysis_GOBP_GO:0019835.rds")
-IP <- AddModuleScore(IP, features = list(cytolysis), name = "GOBP_cytolysis")
-IP$GOBP_cytolysis <- IP$GOBP_cytolysis1
-IP$GOBP_cytolysis1 <- NULL
-
-## prepare data frame
-df <- FetchData(IP, vars = c("response", "phenotype", 
-                             "HALLMARK_interferon_alpha_response", "GOBP_cytolysis"))
-colnames(df) <- c("Response", "Phenotype", "HALLMARK_interferon_alpha_response", "GOBP_cytolysis")
-
-## plotting 
-phenotypes <- unique(IP$phenotype)
-for (GeneSet in GeneSets) {
-  plots <- list()
-  for (pheno in phenotypes) {
-    data <- df[df$Phenotype==pheno,]
-    px <- ggviolin(data, x = "Response", y = GeneSet, fill = "Response", add = "boxplot") +
-      scale_fill_manual(values = c("#FAB833", "#5981BC")) +
-      labs(title = pheno, x = "", y = "Signature Score") +
-      theme_pubr(legend = "right") +
-      scale_y_continuous(expand = expansion(mult = c(0.01,0.05))) +
-      geom_signif(
-        comparisons = list(c("CR", "NR")),
-        test = "wilcox.test",
-        map_signif_level = FALSE,
-        textsize = 3,
-        vjust = 0.05,
-        y_position = max(data[[GeneSet]], na.rm = TRUE) + 0.1 * abs(max(data[[GeneSet]], na.rm = TRUE))
-      ) +
-      theme(
-        plot.title = element_text(size = 14, face = "bold", hjust = 0.5), 
-        axis.title = element_text(size = 12, face = "bold"), 
-        axis.text = element_text(size = 12), 
-        legend.title = element_text(size = 12), 
-        legend.text = element_text(size = 12) 
-      ) 
-    saveFig(px, paste0("./exploration/plots/Signature_Score/violin.plot.sc_", GeneSet, "_", pheno), wd = 2000, ht = 2000)
-    plots[[pheno]] <- px
-  }
-
-##============================-- fig 1g tile maps of gene set signature scoring across phenotype and patient--=======================================##
+##============================-- fig 1f tile maps of gene set signature scoring across phenotype and patient--=======================================##
 ## necesasry
 library(ComplexHeatmap)
 library(circlize)
@@ -228,6 +180,97 @@ for (GeneSet in GeneSets) {
   print(px)
   dev.off()
 }
+
+##============================-- fig 1g box plot of gene set signature scoring across phenotype --=======================================##
+## all 
+GeneSets <- c("HALLMARK_interferon_alpha_response")
+## plotting
+for (GeneSet in GeneSets) {
+  ## prepare data frame
+  df <- FetchData(IP, vars = c("response", "patient", "phenotype", GeneSet))
+  colnames(df) <- c("Response", "Patient", "Phenotype", "geneset")
+  df.processed <- df %>%
+    group_by(Response, Patient) %>%
+    summarise(AvgExpr = mean(geneset, na.rm = TRUE), .groups = "drop")
+  d_value <- cliffs_delta(as.vector(df.processed[df.processed$Response=="CR",][["AvgExpr"]]),
+                          as.vector(df.processed[df.processed$Response=="NR",][["AvgExpr"]]))
+  ## plotting
+  px <- ggboxplot(df.processed, x = "Response", y = "AvgExpr", fill = "Response", width = 0.7) +
+    geom_point(position = position_jitter(width = 0.3), size = 3, color = "black") + # Adds jittered points
+    scale_fill_manual(values = c("#FAB833", "#5981BC")) +
+    labs(title = GeneSet, x = "", y = "Signature Score") +
+    theme_pubr(legend = "right") +
+    scale_y_continuous(expand = expansion(mult = c(0.01,0.05))) +
+    geom_signif(
+      comparisons = list(c("CR", "NR")),
+      test = "wilcox.test",
+      test.args = list(alternative = "greater", exact = TRUE),
+      map_signif_level = FALSE,
+      textsize = 3,
+      vjust = 0.05,
+      y_position = max(df.processed[["AvgExpr"]], na.rm = TRUE) + 0.1 * abs(max(df.processed[["AvgExpr"]], na.rm = TRUE))
+    ) +
+    annotate("text", x = Inf, y = Inf, 
+             label = sprintf("Cliff Delta = %.2f", d_value$r_rank_biserial), hjust = 1.1, vjust = 1.1, size = 5)+ 
+    theme(
+      plot.title = element_text(size = 14, face = "bold", hjust = 0.5), # Adjusts the size of the figure titles
+      axis.title = element_text(size = 12, face = "bold"), # Adjusts the size of the axis titles
+      axis.text = element_text(size = 12), # Adjusts the size of the axis text
+      legend.title = element_text(size = 12), # Adjusts the size of the legend title
+      legend.text = element_text(size = 12) # Adjusts the size of the legend text
+    ) 
+  saveFig(px, paste0("./revision/plots/internal/box.plot.pseudo.bulk.w.cliff.delta_all_", GeneSet), wd = 2000, ht = 2000)
+}
+
+## each phenotypes
+library(patchwork)
+phenotypes <- levels(IP$phenotype)
+GeneSets <- c("HALLMARK_interferon_alpha_response")
+## plotting
+for (GeneSet in GeneSets) {
+  ## prepare data frame
+  df <- FetchData(IP, vars = c("response", "patient", "phenotype", GeneSet))
+  colnames(df) <- c("Response", "Patient", "Phenotype", "geneset")
+  df.processed <- df %>%
+    group_by(Response, Patient, Phenotype) %>%
+    summarise(AvgExpr = mean(geneset, na.rm = TRUE), .groups = "drop")
+  ## plotting
+  plots <- list()
+  for (pheno in phenotypes) {
+    data <- df.processed[df.processed$Phenotype==pheno, ]
+    d_value <- cliffs_delta(as.vector(data[data$Response=="CR",][["AvgExpr"]]),
+                            as.vector(data[data$Response=="NR",][["AvgExpr"]]))
+    px <- ggboxplot(data, x = "Response", y = "AvgExpr", fill = "Response", width = 0.7, outlier.shape = NA) +
+      geom_point(position = position_jitter(width = 0.3), size = 3, color = "black") + # Adds jittered points
+      scale_fill_manual(values = c("#FAB833", "#5981BC")) +
+      labs(title = pheno, x = "", y = "Signature Score") +
+      theme_pubr(legend = "right") +
+      scale_y_continuous(expand = expansion(mult = c(0.01,0.05))) +
+      geom_signif(
+        comparisons = list(c("CR", "NR")),
+        test = "wilcox.test", 
+        test.args = list(alternative = "greater", exact = TRUE),
+        map_signif_level = FALSE,
+        textsize = 3,
+        vjust = 0.05,
+        y_position = max(data[["AvgExpr"]], na.rm = TRUE) + 0.1 * abs(max(data[["AvgExpr"]], na.rm = TRUE))
+      ) + 
+      annotate("text", x = Inf, y = Inf, 
+               label = sprintf("Cliff Delta = %.2f", d_value$r_rank_biserial), hjust = 1.1, vjust = 1.1, size = 5)+ 
+      
+      theme(
+        plot.title = element_text(size = 14, face = "bold", hjust = 0.5), # Adjusts the size of the figure titles
+        axis.title = element_text(size = 12, face = "bold"), # Adjusts the size of the axis titles
+        axis.text = element_text(size = 12), # Adjusts the size of the axis text
+        legend.title = element_text(size = 12), # Adjusts the size of the legend title
+        legend.text = element_text(size = 12) # Adjusts the size of the legend text
+      ) 
+    saveFig(px, paste0("./revision/plots/internal/box.plot.pseudo.bulkw.cliff.delta_", GeneSet, "_", pheno), wd = 2000, ht = 2000)
+    plots[[pheno]] <- px
+  }
+  plots.cbd <- wrap_plots(plots, ncol = 7)
+  saveFig(plots.cbd, paste0("./revision/plots/internal/box.plot.pseudo.bulkw.cliff.delta_each.phenotype_", GeneSet), wd = 14000, ht = 2000)
+}  
 
 ##============================-- fig 1h umap of validation genset --=======================================##
 ## load data
@@ -304,78 +347,7 @@ px <- ggplot(df, aes(x = Patient.Ordered, fill = Phenotype)) +
 saveFig(px, "./Other_Data/plots/Maus2022/Axi_fine_anno/UMAP_Feature/proportion_phenotype.in.patient_group.by.response", wd = 3000, ht = 2000)
 
 
-##============================-- fig 1k violin plots showing expression of IFN-I signaling, validation dataset--=======================================##
-## prepare data frame
-df <- FetchData(IP, vars = c("response.coarse", "phenotype.fine", 
-                             "HALLMARK_interferon_alpha_response"))
-colnames(df) <- c("Response", "Phenotype", "HALLMARK_interferon_alpha_response")
-## plotting 
-GeneSets <- c("HALLMARK_interferon_alpha_response")
-## all
-for (GeneSet in GeneSets) {
-  ## define comparison and position
-  comparisons = list(c("CR", "PD"))
-  ymax = max(df[[GeneSet]])
-  ## plotting
-  px <- ggboxplot(df, x = "Response", y = GeneSet, fill = "Response") +
-    scale_fill_manual(values = c("#FAB833", "#5981BC", "grey")) +
-    labs(title = GeneSet, x = "", y = "Signature Score") +
-    theme_pubr(legend = "right") +
-    scale_y_continuous(expand = expansion(mult = c(0.01,0.05))) +
-    geom_signif(
-      comparisons = comparisons,
-      test = "wilcox.test",
-      map_signif_level = FALSE,
-      textsize = 3,
-      vjust = 0.05,
-      y_position = ymax * 1.02 + seq(0, by = ymax * 0.1, length.out = length(comparisons))
-    ) +
-    theme(
-      plot.title = element_text(size = 14, face = "bold", hjust = 0.5), # Adjusts the size of the figure titles
-      axis.title = element_text(size = 12, face = "bold"), # Adjusts the size of the axis titles
-      axis.text = element_text(size = 12), # Adjusts the size of the axis text
-      legend.title = element_text(size = 12), # Adjusts the size of the legend title
-      legend.text = element_text(size = 12) # Adjusts the size of the legend text
-    ) 
-  saveFig(px, paste0("./Other_Data/plots/Maus2022/Axi_fine_anno/Signature_score/boxplot.sc_all_", GeneSet), wd = 2000, ht = 2000)
-}
-
-## each phenotypes
-phenotypes <- levels(IP$phenotype.fine)
-for (GeneSet in GeneSets) {
-  plots <- list()
-  for (pheno in phenotypes) {
-    data <- df[df$Phenotype==pheno,]
-    comparisons = list(c("CR", "PD"))
-    ymax = max(data[[GeneSet]])
-    px <- ggviolin(data, x = "Response", y = GeneSet, fill = "Response", add = "boxplot", add.params = list(fill = "white")) +
-      scale_fill_manual(values = c("#FAB833", "#5981BC", "grey")) +
-      labs(title = pheno, x = "", y = "Signature Score") +
-      theme_pubr(legend = "right") +
-      scale_y_continuous(expand = expansion(mult = c(0.01,0.05))) +
-      geom_signif(
-        comparisons = comparisons,
-        test = "wilcox.test",
-        map_signif_level = FALSE,
-        textsize = 3,
-        vjust = 0.05,
-        y_position = ymax * 1.02 + seq(0, by = ymax * 0.1, length.out = length(comparisons))
-      ) +
-      theme(
-        plot.title = element_text(size = 14, face = "bold", hjust = 0.5), # Adjusts the size of the figure titles
-        axis.title = element_text(size = 12, face = "bold"), # Adjusts the size of the axis titles
-        axis.text = element_text(size = 12), # Adjusts the size of the axis text
-        legend.title = element_text(size = 12), # Adjusts the size of the legend title
-        legend.text = element_text(size = 12) # Adjusts the size of the legend text
-      ) 
-    #saveFig(px, paste0("./Other_Data/plots/Maus2022/Axi_fine_anno/Signature_score/violin.plot.sc_", GeneSet, "_", pheno), wd = 2000, ht = 2000)
-    plots[[pheno]] <- px
-  }
-  plots.cbd <- wrap_plots(plots, ncol = 7)
-  saveFig(plots.cbd, paste0("./Other_Data/plots/Maus2022/Axi_fine_anno/Signature_score/violin.plot.sc_each.phenotypes_", GeneSet), wd = 14000, ht = 2000)
-}
-
-##============================-- fig 1l tilemap showing expression of IFN-I signaling, validation dataset--=======================================##
+##============================-- fig 1k tilemap showing expression of IFN-I signaling, validation dataset--=======================================##
 library(ComplexHeatmap)
 library(circlize)
 library(Cairo)
@@ -447,3 +419,98 @@ for (GeneSet in GeneSets) {
   print(px)
   dev.off()
 }
+
+##============================-- fig 1l box plot of gene set signature scoring across phenotype, validation dataset--=======================================##
+## all 
+GeneSets <- c("HALLMARK_interferon_alpha_response")
+## plotting
+## add cliff delta
+for (GeneSet in GeneSets) {
+  ## prepare data frame
+  df <- FetchData(IP, vars = c("response.coarse", "patient", "phenotype.fine", GeneSet))
+  colnames(df) <- c("Response", "Patient", "Phenotype", "geneset")
+  df.processed <- df %>%
+    group_by(Response, Patient) %>%
+    summarise(AvgExpr = mean(geneset, na.rm = TRUE), .groups = "drop")
+  d_value <- cliffs_delta(as.vector(df.processed[df.processed$Response=="CR",][["AvgExpr"]]),
+                          as.vector(df.processed[df.processed$Response=="PD",][["AvgExpr"]]))
+  ## plotting
+  comparisons = list(c("CR", "PD"))
+  ymax = max(df.processed$AvgExpr)
+  px <- ggboxplot(df.processed, x = "Response", y = "AvgExpr", fill = "Response", width = 0.7) +
+    geom_point(position = position_jitter(width = 0.3), size = 3, color = "black") + # Adds jittered points
+    scale_fill_manual(values = c("#FAB833", "#5981BC", "grey")) +
+    labs(title = GeneSet, x = "", y = "Signature Score") +
+    theme_pubr(legend = "right") +
+    scale_y_continuous(expand = expansion(mult = c(0.01,0.05))) +
+    geom_signif(
+      comparisons = comparisons,
+      test = "wilcox.test",
+      test.args = list(alternative = "greater", exact = TRUE),
+      map_signif_level = FALSE,
+      textsize = 3,
+      vjust = 0.05,
+      y_position = ymax * 1.02 + seq(0, by = ymax * 0.1, length.out = length(comparisons))
+    ) +
+    annotate("text", x = Inf, y = Inf, 
+             label = sprintf("Cliff Delta = %.2f", d_value$r_rank_biserial), hjust = 1.1, vjust = 1.1, size = 5)+ 
+    theme(
+      plot.title = element_text(size = 14, face = "bold", hjust = 0.5), # Adjusts the size of the figure titles
+      axis.title = element_text(size = 12, face = "bold"), # Adjusts the size of the axis titles
+      axis.text = element_text(size = 12), # Adjusts the size of the axis text
+      legend.title = element_text(size = 12), # Adjusts the size of the legend title
+      legend.text = element_text(size = 12) # Adjusts the size of the legend text
+    ) 
+  saveFig(px, paste0("./revision/plots/external/box.plot.pseudo.bulk.w.cliff.delta_all_", GeneSet), wd = 2000, ht = 2000)
+}
+
+## each phenotypes
+phenotypes <- levels(IP$phenotype.fine)
+GeneSets <- c("HALLMARK_interferon_alpha_response")
+## plotting
+## add cliff delta
+## plotting
+for (GeneSet in GeneSets) {
+  ## prepare data frame
+  df <- FetchData(IP, vars = c("response.coarse", "patient", "phenotype.fine", GeneSet))
+  colnames(df) <- c("Response", "Patient", "Phenotype", "geneset")
+  df.processed <- df %>%
+    group_by(Response, Patient, Phenotype) %>%
+    summarise(AvgExpr = mean(geneset, na.rm = TRUE), .groups = "drop")
+  ## plotting
+  plots <- list()
+  for (pheno in phenotypes) {
+    data <- df.processed[df.processed$Phenotype==pheno, ]
+    d_value <- cliffs_delta(as.vector(data[data$Response=="CR",][["AvgExpr"]]),
+                            as.vector(data[data$Response=="PD",][["AvgExpr"]]))
+    ymax = max(data$AvgExpr)
+    px <- ggboxplot(data, x = "Response", y = "AvgExpr", fill = "Response", width = 0.7, outlier.shape = NA) +
+      geom_point(position = position_jitter(width = 0.3), size = 3, color = "black") + # Adds jittered points
+      scale_fill_manual(values = c("#FAB833", "#5981BC", "grey")) +
+      labs(title = pheno, x = "", y = "Signature Score") +
+      theme_pubr(legend = "right") +
+      scale_y_continuous(expand = expansion(mult = c(0.01,0.05))) +
+      geom_signif(
+        comparisons = comparisons,
+        test = "wilcox.test",
+        test.args = list(alternative = "greater", exact = TRUE),
+        map_signif_level = FALSE,
+        textsize = 3,
+        vjust = 0.05,
+        y_position = ymax * 1.02 + seq(0, by = ymax * 0.1, length.out = length(comparisons))
+      ) +
+      annotate("text", x = Inf, y = Inf, 
+               label = sprintf("Cliff Delta = %.2f", d_value$r_rank_biserial), hjust = 1.1, vjust = 1.1, size = 5)+ 
+      theme(
+        plot.title = element_text(size = 14, face = "bold", hjust = 0.5), # Adjusts the size of the figure titles
+        axis.title = element_text(size = 12, face = "bold"), # Adjusts the size of the axis titles
+        axis.text = element_text(size = 12), # Adjusts the size of the axis text
+        legend.title = element_text(size = 12), # Adjusts the size of the legend title
+        legend.text = element_text(size = 12) # Adjusts the size of the legend text
+      ) 
+    #saveFig(px, paste0("./revision/plots/external/box.plot.pseudo.bulk.w.cliff.delta_all_", GeneSet, "_", pheno), wd = 2000, ht = 2000)
+    plots[[pheno]] <- px
+  }
+  plots.cbd <- wrap_plots(plots, ncol = 7)
+  saveFig(plots.cbd, paste0("./revision/plots/external/box.plot.pseudo.bulk.w.cliff.delta_all_each.phenotype_", GeneSet), wd = 14000, ht = 2000)
+}  
