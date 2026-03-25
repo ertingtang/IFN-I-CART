@@ -1,0 +1,204 @@
+## these are codes for plots in the supplementary figures
+
+##============================-- Set up Environment --=======================================##
+rm(list=ls())
+setwd("/project/jhuangime/erting/workspace/project_IFN/")
+.libPaths("~/erting/software/R_4.2/")
+
+unloadNamespace("plyr")
+pkgs <- c("Seurat", "tidyverse", "SingleCellExperiment",
+          "ggpubr", "ggsci", "ggrepel", "clusterProfiler", "pheatmap", "devtools", 
+          "cowplot", "data.table", "harmony", "BiocParallel", "Nebulosa", "enrichplot", "patchwork")
+
+lapply(pkgs, require, character.only = TRUE)
+
+source("scripts/functions.R")
+
+## load seurat obj
+IP <- readRDS("./processing/seurat_objs/IP_NoLowQuality_8pts_20240327.rds")
+
+##====================================-- Fig S1A, full violin plot of marker genes --===============================================##
+## define key marker genes
+type.markers <- c("CD3E", "CD4", "CD8A")
+proliferating.markers <- c("TOP2A", "MKI67")
+memory.markers <- c("TCF7", "IL7R", "SELL", "LEF1", "CD27")
+activated.markers <- c("CD38")
+effector.markers <- c("TBX21", "KLRG1", "GZMB", "PRF1", "GNLY")
+treg.markers <- c("FOXP3", "CTLA4")
+unconventional.markers <- c("TRDC", "NCAM1", "FCGR3A")
+#ISGs <- c("IFITM1", "IFITM2")
+## combine them
+key.markers <- c(type.markers, proliferating.markers, memory.markers, activated.markers,
+                 effector.markers, treg.markers, unconventional.markers)
+
+## plotting
+px <- VlnPlot(IP, features = key.markers, group.by = "phenotype", 
+              pt.size = 0, stack = T, fill.by = "ident", cols = pal_npg()(7), flip = T) +
+  labs(x = "") + NoLegend() +
+  theme(
+    axis.title = element_text(size=15, face = 'bold'),
+    axis.text.x = element_text(size = 12, face = 'bold'),
+    strip.text.y = element_text(size = 12, face = "italic"))
+saveFig(px, "./exploration/plots/UMAP_Feature/feature.plot_20240708", wd = 2000, ht = 3500)
+
+##====================================-- Fig S1B, UMAP of each individual patient --===============================================##
+px <- DimPlot(IP, reduction = "umap", label = F, pt.size = 0.05, group.by = "phenotype", split.by = "patient.by.response", ncol = 4) + 
+  scale_color_npg() +
+  theme_pubr(border = T, legend = "right") + 
+  labs(x="UMAP1", y="UMAP2") +
+  theme(
+    plot.title = element_blank(),
+    axis.title = element_text(size=20,face = 'bold'),
+    axis.ticks = element_blank(),
+    axis.text = element_blank(),
+    legend.title = element_blank(),
+    legend.text = element_text(size=12)) + 
+  coord_fixed(ratio = 1) 
+saveFig(px, "./exploration/plots/UMAP_Feature/umap_split.by.patient.color.clusters_20240724", wd = 4500, ht = 2000)
+
+##====================================-- Fig S1C, protortions of each phenotype --===============================================##
+## prepare dataframe
+df <- FetchData(IP, vars = c("patient", "phenotype", "response", "patient.by.response"))
+colnames(df) <- c("Patient", "Phenotype", "Response", "Patient.Ordered")
+## generate proportion data.frame
+proportions.df <- df %>%
+  group_by(Patient, Response, Phenotype) %>%
+  summarise(Count = n(), .groups = 'drop') %>%
+  group_by(Patient, Response) %>%
+  mutate(Total = sum(Count)) %>%
+  ungroup() %>%
+  mutate(Proportion = Count / Total)
+## decide comparisons
+comparisons = list(c("CR", "NR"))
+## generate empty list
+plots_list <- list()
+phenotypes <- unique(IP$phenotype)
+for (phenotype in phenotypes) {
+  # Filter data for the selected phenotype
+  data <- filter(proportions.df, Phenotype == phenotype)
+  # Find the maximum y value from the data
+  ymin <- min(data$Proportion, na.rm = TRUE)
+  ymax <- max(data$Proportion, na.rm = TRUE)
+  # Plot
+  px <- ggplot(data, aes(x = Response, y = Proportion)) +
+    geom_boxplot(aes(fill = Response), outlier.shape = NA) +  # Suppress outliers
+    geom_point(aes(color = Response), position = position_jitter(width = 0.2), size = 1.5, color = "black") +
+    labs(title = phenotype,
+         x = " ",
+         y = "Proportion") +
+    theme_pubr(border = T, legend = "right") +
+    theme(
+      plot.title = element_text(size = 14, face = "bold", hjust = 0.5), # Adjusts the size of the figure titles
+      axis.title = element_text(size=12, color = "black", face = "bold"), # Adjusts the size of the axis titles
+      axis.text.x = element_text(size=12, color = "black", face = "bold"), # Adjusts the size of the x axis text
+      axis.text.y = element_text(size=12, color = "black"), # Adjusts the size of the y axis text
+      legend.title = element_text(size=12, color = "black"), # Adjusts the size of the legend title
+      legend.text = element_text(size=12, color = "black") # Adjusts the size of the legend text
+    ) + 
+    scale_fill_manual(values = c("CR"="#FAB833", "NR"="#5981BC")) + 
+    ylim(ymin*0.7, ymax * 1.15) + # adjust ylim
+    geom_signif(
+      comparisons = comparisons,
+      test = "wilcox.test",
+      map_signif_level = FALSE,
+      textsize = 3,
+      vjust = 0.05,
+      y_position = ymax*1.05
+    ) # add test results
+  plots_list[[phenotype]] <- px
+  #saveFig(px, paste0("./exploration/plots/UMAP_Feature/CRvsNR_phenotype.proportion_", phenotype), wd = 2000, ht = 2000)
+}
+# Combine all plots into one big figure using patchwork
+big_figure <- wrap_plots(plots_list, ncol = length(unique(IP$phenotype)))
+# save the combined figure
+saveFig(big_figure, "./exploration/plots/UMAP_Feature/CRvsNR_phenotype.proportion_1row", wd = 1000*length(unique(IP$phenotype)), ht = 1000)
+
+##====================================-- Fig S2A, full violin plot of marker gene, validation cohort --===============================================##
+IP <- readRDS("./Other_Data/seurat_objs/Maus2022_AXICEL_CleanResponse_20250114.rds")
+
+## define key marker genes
+type.markers <- c("CD3E", "CD4", "CD8A")
+proliferating.markers <- c("TOP2A", "MKI67")
+memory.markers <- c("TCF7", "IL7R", "SELL", "LEF1", "CD27")
+activated.markers <- c("CD38")
+effector.markers <- c("GZMB", "PRF1", "GNLY")
+treg.markers <- c("FOXP3", "CTLA4")
+unconventional.markers <- c("TRDC", "FCGR3A")
+#ISGs <- c("IFITM1", "IFITM2")
+## combine them
+key.markers <- c(type.markers, proliferating.markers, memory.markers, activated.markers, effector.markers, treg.markers, unconventional.markers)
+
+## plotting
+px <- VlnPlot(IP, features = key.markers, group.by = "phenotype.fine", 
+              pt.size = 0, stack = T, fill.by = "ident", cols = pal_npg()(7), flip = T) +
+  labs(x = "") + NoLegend() +
+  theme(
+    axis.title = element_text(size=15, face = 'bold'),
+    axis.text.x = element_text(size = 12, face = 'bold'),
+    strip.text.y = element_text(size = 12, face = "italic"))
+saveFig(px, "./Other_Data/plots/Maus2022/Axi_fine_anno/UMAP_Feature/feature.plot_20240708", wd = 2000, ht = 3000)
+
+##====================================-- Fig S2B, DEG, validation cohort --===============================================##
+px <- ggplot(DEGs.CRvsNR, aes(x=avg_log2FC_v2, y=negLogPval)) +
+  geom_point(size=2, color=alpha("grey", 0.5)) + # Plots all points with some transparency +
+  geom_point(data=DEGs.CRvsNR[DEGs.CRvsNR$X%in%ISGs,], aes(x=avg_log2FC_v2, y=negLogPval),
+             size=2.5, color="#E64B35B2") + 
+  geom_text_repel(data=DEGs.CRvsNR[DEGs.CRvsNR$X%in%ISGs & DEGs.CRvsNR$p_val_adj<0.05 & DEGs.CRvsNR$avg_log2FC>0.25,], 
+                  aes(x = avg_log2FC_v2, y = negLogPval, label = X),
+                  size = 3.5, color="black", 
+                  segment.color = "black", 
+                  segment.size = 0.25,
+                  max.overlaps = 10000,
+                  min.segment.length=0) + # label genes
+  labs(x="Log2 Fold Change", y="-Log10 Adjusted P-Value", title="CR vs NR") + # Threshold lines for logFC
+  theme_pubr() + # decide theme
+  theme(
+    plot.title = element_text(size=20, face = "bold", hjust = 0.5),
+    axis.title = element_text(size = 15), # Adjust the size of axis titles
+    axis.text = element_text(size = 12), # Adjust the size of axis tick text
+    legend.title = element_text(size = 15), # Adjust the size of legend title
+    legend.text = element_text(size = 15), # Adjust the size of legend text
+  ) +
+  xlim(-1, 1) +
+  geom_hline(yintercept=-log10(0.05), linetype="dashed", color="grey50") + # Threshold line for p-value
+  geom_vline(xintercept=c(-0.25, 0.25), linetype="dashed", color="grey50") # Threshold lines for logFC
+saveFig(px, "./Other_Data/plots/Maus2022/DEGs/Volcano_plots_ISG.all.highlighted_8pts_All_v2", wd = 2000, ht = 2000)
+
+##====================================-- Fig S2C, gsea, validation cohort --===============================================##
+gse.hallmark <- readRDS("./Other_Data/rds/Maus2022_axicel_clean_GSEA.hallmark_CRvsPD.rds")
+if ("HALLMARK_INTERFERON_ALPHA_RESPONSE" %in% gse.hallmark@result$ID){
+  ## do some annotation
+  NES <- sprintf("%.2f", round(gse.hallmark@result[gse.hallmark@result$ID=="HALLMARK_INTERFERON_ALPHA_RESPONSE", "NES"], 2))
+  pvalue <- sprintf("%.3f", round(gse.hallmark@result[gse.hallmark@result$ID=="HALLMARK_INTERFERON_ALPHA_RESPONSE", "p.adjust"], 3))
+  qvalue <- sprintf("%.3f", round(gse.hallmark@result[gse.hallmark@result$ID=="HALLMARK_INTERFERON_ALPHA_RESPONSE", "qvalue"], 3))
+  anno <- paste0("NES = ", NES, "\nFDR q-value = ", qvalue, "\np.adjust = ", pvalue)
+  ## plotting
+  px <- gseaplot2(gse.hallmark,
+                  "HALLMARK_INTERFERON_ALPHA_RESPONSE",
+                  title = "HALLMARK: interferon alpha response",
+                  subplots = 1:2)
+  ## adjust formatting and add annottation
+  px[[1]] <- px[[1]] + 
+    theme(
+      plot.title = element_text(size=25, face = "bold", hjust = 0.5),
+      axis.title = element_text(size = 15), 
+      axis.text = element_text(size = 15),
+    ) + 
+    annotate("text",
+             label=anno,
+             x=Inf, y=Inf-2,
+             color="black", hjust=1, vjust=1, size=5)
+  px[[2]] <- px[[2]] + 
+    labs(x="Rank in Ordered Dataset") +
+    theme(
+      axis.title = element_text(size = 15), 
+      axis.text.x = element_text(size = 15),
+    )
+  # Combine the plots with custom heights
+  px.combine <- px[[1]] / px[[2]]
+  # Adjust the plot layout with specific heights
+  px.combine <- px.combine +
+    plot_layout(guides = 'collect') +  
+    plot_layout(heights = c(3, 1))
+  saveFig(px.combine, "./Other_Data/plots/Maus2022/GSEA/Clean/AXICEL_1.MO_GSEA_CRvsNR_HALLMARK_interferon_alpha_response", wd = 2500, ht = 2000)
+}
